@@ -4,7 +4,7 @@ import (
 	"database/sql"
 	"fmt"
 	"log"
-	"os" 
+	"os"
 	"time"
 
 	_ "github.com/lib/pq"
@@ -20,25 +20,15 @@ type Job struct {
 
 func main() {
 	dbHost := os.Getenv("DB_HOST")
-	if dbHost == "" {
-		dbHost = "localhost"
-	}
+	if dbHost == "" { dbHost = "localhost" }
 	dbPort := os.Getenv("DB_PORT")
-	if dbPort == "" {
-		dbPort = "5432"
-	}
+	if dbPort == "" { dbPort = "5432" }
 	dbUser := os.Getenv("DB_USER")
-	if dbUser == "" {
-		dbUser = "postgres"
-	}
+	if dbUser == "" { dbUser = "postgres" }
 	dbPassword := os.Getenv("DB_PASSWORD")
-	if dbPassword == "" {
-		dbPassword = "secret"
-	}
+	if dbPassword == "" { dbPassword = "secret" }
 	dbName := os.Getenv("DB_NAME")
-	if dbName == "" {
-		dbName = "postgres"
-	}
+	if dbName == "" { dbName = "postgres" }
 
 	connStr := fmt.Sprintf("postgres://%s:%s@%s:%s/%s?sslmode=disable",
 		dbUser, dbPassword, dbHost, dbPort, dbName)
@@ -48,17 +38,24 @@ func main() {
 	}
 	defer db.Close()
 
-	if err := db.Ping(); err != nil {
-		log.Fatal("Cannot connect to DB:", err)
+	for i := 0; i < 5; i++ {
+		if err := db.Ping(); err == nil {
+			break
+		}
+		fmt.Println("Waiting for DB...")
+		time.Sleep(2 * time.Second)
 	}
-	fmt.Println("Connected to Postgres at", dbHost)
+
+	fmt.Println("Connected to Postgres!")
+
+	initDB(db)
 
 	seedJobs(db)
 
 	ticker := time.NewTicker(10 * time.Second)
 	defer ticker.Stop()
 
-	fmt.Println("Scheduler started. Waiting for jobs... (Ctrl+C to stop)")
+	fmt.Println("Scheduler started. Waiting for jobs...")
 
 	for {
 		select {
@@ -67,6 +64,22 @@ func main() {
 			processJobs(db)
 		}
 	}
+}
+
+func initDB(db *sql.DB) {
+	query := `
+	CREATE TABLE IF NOT EXISTS jobs (
+		id SERIAL PRIMARY KEY,
+		name TEXT NOT NULL,
+		cron_schedule TEXT NOT NULL,
+		next_run_at TIMESTAMP NOT NULL
+	);`
+	
+	_, err := db.Exec(query)
+	if err != nil {
+		log.Fatal("Failed to create table:", err)
+	}
+	fmt.Println("Database initialized (Table 'jobs' exists)")
 }
 
 func processJobs(db *sql.DB) {
@@ -90,7 +103,7 @@ func processJobs(db *sql.DB) {
 
 		schedule, err := parser.Parse(j.CronSchedule)
 		if err != nil {
-			fmt.Printf("Error parsing cron for %d: %v\n", j.ID, err)
+			fmt.Printf("Error parsing cron: %v\n", err)
 			continue
 		}
 		nextTime := schedule.Next(time.Now())
@@ -106,17 +119,22 @@ func processJobs(db *sql.DB) {
 
 func seedJobs(db *sql.DB) {
 	var count int
-	db.QueryRow("SELECT COUNT(*) FROM jobs WHERE name = $1", "Send Email").Scan(&count)
+	_ = db.QueryRow("SELECT COUNT(*) FROM jobs WHERE name = $1", "Send Email").Scan(&count)
+	
 	if count == 0 {
-		db.Exec(`INSERT INTO jobs (name, cron_schedule, next_run_at) VALUES ($1, $2, $3)`,
+		_, err := db.Exec(`INSERT INTO jobs (name, cron_schedule, next_run_at) VALUES ($1, $2, $3)`, 
 			"Send Email", "*/1 * * * *", time.Now())
-		fmt.Println("Inserted job: 'Send Email'")
+		if err == nil {
+			fmt.Println("Inserted job: 'Send Email'")
+		}
 	}
-
-	db.QueryRow("SELECT COUNT(*) FROM jobs WHERE name = $1", "Database Backup").Scan(&count)
+	
+	_ = db.QueryRow("SELECT COUNT(*) FROM jobs WHERE name = $1", "Database Backup").Scan(&count)
 	if count == 0 {
-		db.Exec(`INSERT INTO jobs (name, cron_schedule, next_run_at) VALUES ($1, $2, $3)`,
+		_, err := db.Exec(`INSERT INTO jobs (name, cron_schedule, next_run_at) VALUES ($1, $2, $3)`, 
 			"Database Backup", "*/2 * * * *", time.Now())
-		fmt.Println("Inserted job: 'Database Backup'")
+		if err == nil {
+			fmt.Println("Inserted job: 'Database Backup'")
+		}
 	}
 }

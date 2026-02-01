@@ -1,0 +1,43 @@
+version: '3.8'
+
+services:
+  # 1. The Database
+  db:
+    image: postgres:15-alpine
+    container_name: cron-db-container
+    restart: always
+    environment:
+      POSTGRES_USER: postgres
+      POSTGRES_PASSWORD: secret
+      POSTGRES_DB: postgres
+    ports:
+      - "5432:5432"
+    volumes:
+      - postgres-data:/var/lib/postgresql/data
+
+  # 2. Redis (THE MISSING PIECE)
+  redis:
+    image: redis:alpine
+    container_name: cron-redis-container
+    ports:
+      - "6379:6379"
+
+  # 3. The Scheduler
+  scheduler:
+    build: .
+    container_name: scheduler-node-1
+    depends_on:
+      - db
+      - redis
+    environment:
+      DB_HOST: db
+      DB_PORT: 5432
+      DB_USER: postgres
+      DB_PASSWORD: secret
+      DB_NAME: postgres
+      # Redis Config
+      REDIS_HOST: redis
+      REDIS_PORT: 6379
+
+volumes:
+  postgres-data:
