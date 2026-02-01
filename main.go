@@ -4,6 +4,7 @@ import (
 	"database/sql"
 	"fmt"
 	"log"
+	"os" 
 	"time"
 
 	_ "github.com/lib/pq"
@@ -18,7 +19,29 @@ type Job struct {
 }
 
 func main() {
-	connStr := "postgres://postgres:secret@localhost:5432/postgres?sslmode=disable"
+	dbHost := os.Getenv("DB_HOST")
+	if dbHost == "" {
+		dbHost = "localhost"
+	}
+	dbPort := os.Getenv("DB_PORT")
+	if dbPort == "" {
+		dbPort = "5432"
+	}
+	dbUser := os.Getenv("DB_USER")
+	if dbUser == "" {
+		dbUser = "postgres"
+	}
+	dbPassword := os.Getenv("DB_PASSWORD")
+	if dbPassword == "" {
+		dbPassword = "secret"
+	}
+	dbName := os.Getenv("DB_NAME")
+	if dbName == "" {
+		dbName = "postgres"
+	}
+
+	connStr := fmt.Sprintf("postgres://%s:%s@%s:%s/%s?sslmode=disable",
+		dbUser, dbPassword, dbHost, dbPort, dbName)
 	db, err := sql.Open("postgres", connStr)
 	if err != nil {
 		log.Fatal(err)
@@ -28,7 +51,7 @@ func main() {
 	if err := db.Ping(); err != nil {
 		log.Fatal("Cannot connect to DB:", err)
 	}
-	fmt.Println("Connected to Postgres!")
+	fmt.Println("Connected to Postgres at", dbHost)
 
 	seedJobs(db)
 
@@ -67,16 +90,16 @@ func processJobs(db *sql.DB) {
 
 		schedule, err := parser.Parse(j.CronSchedule)
 		if err != nil {
-			fmt.Printf(" Error parsing cron for %d: %v\n", j.ID, err)
+			fmt.Printf("Error parsing cron for %d: %v\n", j.ID, err)
 			continue
 		}
 		nextTime := schedule.Next(time.Now())
 
 		_, err = db.Exec("UPDATE jobs SET next_run_at = $1 WHERE id = $2", nextTime, j.ID)
 		if err != nil {
-		log.Println("Failed to update job:", err)
+			log.Println("Failed to update job:", err)
 		}
-		
+
 		fmt.Printf("Rescheduled for: %v\n", nextTime.Format(time.Kitchen))
 	}
 }
@@ -85,14 +108,14 @@ func seedJobs(db *sql.DB) {
 	var count int
 	db.QueryRow("SELECT COUNT(*) FROM jobs WHERE name = $1", "Send Email").Scan(&count)
 	if count == 0 {
-		db.Exec(`INSERT INTO jobs (name, cron_schedule, next_run_at) VALUES ($1, $2, $3)`, 
+		db.Exec(`INSERT INTO jobs (name, cron_schedule, next_run_at) VALUES ($1, $2, $3)`,
 			"Send Email", "*/1 * * * *", time.Now())
 		fmt.Println("Inserted job: 'Send Email'")
 	}
-	
+
 	db.QueryRow("SELECT COUNT(*) FROM jobs WHERE name = $1", "Database Backup").Scan(&count)
 	if count == 0 {
-		db.Exec(`INSERT INTO jobs (name, cron_schedule, next_run_at) VALUES ($1, $2, $3)`, 
+		db.Exec(`INSERT INTO jobs (name, cron_schedule, next_run_at) VALUES ($1, $2, $3)`,
 			"Database Backup", "*/2 * * * *", time.Now())
 		fmt.Println("Inserted job: 'Database Backup'")
 	}
