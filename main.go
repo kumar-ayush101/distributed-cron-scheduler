@@ -1,6 +1,7 @@
 package main
 
 import (
+	"context"
 	"database/sql"
 	"fmt"
 	"log"
@@ -9,6 +10,7 @@ import (
 
 	_ "github.com/lib/pq"
 	"github.com/robfig/cron/v3"
+	"github.com/redis/go-redis/v9"
 )
 
 type Job struct {
@@ -18,7 +20,36 @@ type Job struct {
 	NextRunAt    time.Time
 }
 
+//redis and postgres complementing each other, postgres permanently stores the data but slow for locking but redis is good for locking data if any job using it but data vanishes  if server crashes or restart because it is in memory database and we can afford losing the locks because they are temporary but not the data which is crucial so we store data in postgres here and for locking we use redis and also the queries to find specific jobs this is best to be done with postgres 
+
+var rdb *redis.Client
+
 func main() {
+
+  //redis connectioon
+	redisHost := os.Getenv("REDIS_HOST")
+	if redisHost == "" {
+		redisHost = "localhost"
+	}
+	redisPort := os.Getenv("REDIS_PORT")
+	if redisPort == "" {
+		redisPort = "6379"
+	}
+	fmt.Printf("connecting to redis at %s: %s", redisHost, redisPort)
+
+	rdb = redis.NewClient(&redis.Options{
+		Addr: fmt.Sprintf("%s:%s",redisHost,redisPort),
+	})
+
+	ctx := context.Background()
+	_,err := rdb.Ping(ctx).Result()
+	if err != nil {
+		log.Fatal("cannot connect to redis:", err)
+	}
+	fmt.Println("connected to redis ")
+
+
+  //postgres connection
 	dbHost := os.Getenv("DB_HOST")
 	if dbHost == "" { dbHost = "localhost" }
 	dbPort := os.Getenv("DB_PORT")
@@ -45,12 +76,12 @@ func main() {
 		fmt.Println("Waiting for DB...")
 		time.Sleep(2 * time.Second)
 	}
-
 	fmt.Println("Connected to Postgres!")
 
 	initDB(db)
-
 	seedJobs(db)
+
+	//starting the scheduler
 
 	ticker := time.NewTicker(10 * time.Second)
 	defer ticker.Stop()
@@ -64,7 +95,10 @@ func main() {
 			processJobs(db)
 		}
 	}
+
 }
+
+
 
 func initDB(db *sql.DB) {
 	query := `
@@ -82,6 +116,8 @@ func initDB(db *sql.DB) {
 	fmt.Println("Database initialized (Table 'jobs' exists)")
 }
 
+
+
 func processJobs(db *sql.DB) {
 	rows, err := db.Query("SELECT id, name, cron_schedule, next_run_at FROM jobs WHERE next_run_at <= $1", time.Now())
 	if err != nil {
@@ -91,11 +127,25 @@ func processJobs(db *sql.DB) {
 	defer rows.Close()
 
 	parser := cron.NewParser(cron.Minute | cron.Hour | cron.Dom | cron.Month | cron.Dow)
+	ctx := context.Background()
 
 	for rows.Next() {
 		var j Job
 		if err := rows.Scan(&j.ID, &j.Name, &j.CronSchedule, &j.NextRunAt); err != nil {
 			log.Println("Error scanning job:", err)
+			continue
+		}
+
+		lockKey := fmt.Sprintf("job_lock:%d",j.ID)
+
+		isLocked , err := rdb.SetNX(ctx, lockKey, "locked", 10*time.Second).Result()
+		if err != nil {
+			log.Println("redis error in locking", err)
+			continue
+		}
+
+		if !isLocked {
+			fmt.Printf("job [%d] is already locked by another node, therefore skipping", j.ID)
 			continue
 		}
 
@@ -116,6 +166,8 @@ func processJobs(db *sql.DB) {
 		fmt.Printf("Rescheduled for: %v\n", nextTime.Format(time.Kitchen))
 	}
 }
+
+
 
 func seedJobs(db *sql.DB) {
 	var count int
