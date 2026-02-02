@@ -9,6 +9,8 @@ import (
 	"os/signal"
 	"syscall"
 	"time"
+	"net/http"
+	"encoding/json"
 
 	_ "github.com/lib/pq"
 	"github.com/robfig/cron/v3"
@@ -16,10 +18,10 @@ import (
 )
 
 type Job struct {
-	ID           int
-	Name         string
-	CronSchedule string
-	NextRunAt    time.Time
+	ID           int     `json:"id"`
+	Name         string      `json:"name"`
+	CronSchedule string      `json:"cron_schedule"`
+	NextRunAt    time.Time      `json:"next_run_at"`
 }
 
 //redis and postgres complementing each other, postgres permanently stores the data but slow for locking but redis is good for locking data if any job using it but data vanishes  if server crashes or restart because it is in memory database and we can afford losing the locks because they are temporary but not the data which is crucial so we store data in postgres here and for locking we use redis and also the queries to find specific jobs this is best to be done with postgres 
@@ -42,6 +44,8 @@ func main() {
 	rdb = redis.NewClient(&redis.Options{
 		Addr: fmt.Sprintf("%s:%s",redisHost,redisPort),
 	})
+
+
 
 	ctx := context.Background()
 	_,err := rdb.Ping(ctx).Result()
@@ -91,6 +95,25 @@ func main() {
 	ctx, cancel := context.WithCancel(context.Background())
 	defer cancel()
 
+	//starting api server
+
+	//here custom http.Server is used for shutting it down gracefully later
+
+  srv := &http.Server{
+		Addr : ":8080",
+		Handler: nil,
+	}
+
+	//to register the route
+	http.HandleFunc("/jobs", apiHandler(db))
+
+  go func() {
+		fmt.Println("api server started at port 8080")
+		if err := srv.ListenAndServe(); err != nil && err != http.ErrServerClosed {
+			log.Fatalf("HTTP server crashed : %v", err)
+		}
+	}()
+
 	//starting the scheduler
 
 	ticker := time.NewTicker(10 * time.Second)
@@ -110,15 +133,82 @@ func main() {
 		}
 	}
 	}()
-
+ 
+	//waiting for signal
 	sig := <-sigChan
 	fmt.Printf("\n Received signal : %v . Shutting down gracefully \n",sig)
+
+	//stopping sheduler loop
 	cancel()
 
-	time.Sleep(1 * time.Second)
+	shutdownCtx, shutdownCancel := context.WithTimeout(context.Background(), 5 * time.Second)
+	defer shutdownCancel()
+
+	if err := srv.Shutdown(shutdownCtx) ; err != nil {
+		log.Printf("http shutdown error : %v", err)
+	} else {
+		fmt.Println("api server stopped")
+	}
 
 	fmt.Println("Bye, closing the program")
 
+}
+
+func apiHandler(db *sql.DB) http.HandlerFunc {
+	return func(w http.ResponseWriter, r *http.Request) {
+		if r.Method == "GET" {
+			rows, err := db.Query("SELECT id, name, cron_schedule, next_run_at FROM jobs")
+			if err != nil {
+				http.Error(w, err.Error(), http.StatusInternalServerError)
+				return
+			}
+			defer rows.Close()
+
+			var jobs []Job
+			for rows.Next() {
+				var j Job
+				if err := rows.Scan(&j.ID, &j.Name, &j.CronSchedule, &j.NextRunAt); err != nil {
+					continue
+				}
+				jobs = append(jobs, j)
+			}
+
+			w.Header().Set("Content-Type", "application/json")
+			json.NewEncoder(w).Encode(jobs)
+			return
+		}
+
+		// POST - creating a new job
+		if r.Method == "POST" {
+			var j Job
+			if err := json.NewDecoder(r.Body).Decode(&j); err != nil {
+				http.Error(w, "Invalid JSON", http.StatusBadRequest)
+				return
+			}
+
+			// calculate first run time immediately
+			parser := cron.NewParser(cron.Minute | cron.Hour | cron.Dom | cron.Month | cron.Dow)
+			schedule, err := parser.Parse(j.CronSchedule)
+			if err != nil {
+				http.Error(w, "Invalid Cron Schedule", http.StatusBadRequest)
+				return
+			}
+			j.NextRunAt = schedule.Next(time.Now())
+
+			query := `INSERT INTO jobs (name, cron_schedule, next_run_at) VALUES ($1, $2, $3) RETURNING id`
+			err = db.QueryRow(query, j.Name, j.CronSchedule, j.NextRunAt).Scan(&j.ID)
+			if err != nil {
+				http.Error(w, err.Error(), http.StatusInternalServerError)
+				return
+			}
+
+			w.Header().Set("Content-Type", "application/json")
+			json.NewEncoder(w).Encode(j)
+			return
+		}
+
+		http.Error(w, "Method not allowed", http.StatusMethodNotAllowed)
+	}
 }
 
 

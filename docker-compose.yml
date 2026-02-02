@@ -25,6 +25,8 @@ services:
   # 3. The Scheduler
   scheduler:
     build: .
+    ports:
+    - "8080:8080"
     #container_name: scheduler-node-1
     depends_on:
       - db
