@@ -6,6 +6,8 @@ import (
 	"fmt"
 	"log"
 	"os"
+	"os/signal"
+	"syscall"
 	"time"
 
 	_ "github.com/lib/pq"
@@ -81,6 +83,14 @@ func main() {
 	initDB(db)
 	seedJobs(db)
 
+	//logic for graceful shutdown
+
+	sigChan := make(chan os.Signal, 1)
+	signal.Notify(sigChan, syscall.SIGINT , syscall.SIGTERM)
+
+	ctx, cancel := context.WithCancel(context.Background())
+	defer cancel()
+
 	//starting the scheduler
 
 	ticker := time.NewTicker(10 * time.Second)
@@ -88,13 +98,26 @@ func main() {
 
 	fmt.Println("Scheduler started. Waiting for jobs...")
 
-	for {
-		select {
-		case t := <-ticker.C:
-			fmt.Println("\n Tick at", t.Format("15:04:05"))
-			processJobs(db)
+	go func() {
+     for {
+		         select {
+						 case t := <-ticker.C:
+							fmt.Println("\n Tick at ", t.Format("15:04:05"))
+							processJobs(db)
+						 case <-ctx.Done():
+						  fmt.Println("Stopping the scheduler loop")
+							return
 		}
 	}
+	}()
+
+	sig := <-sigChan
+	fmt.Printf("\n Received signal : %v . Shutting down gracefully \n",sig)
+	cancel()
+
+	time.Sleep(1 * time.Second)
+
+	fmt.Println("Bye, closing the program")
 
 }
 
