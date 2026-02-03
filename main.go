@@ -24,6 +24,14 @@ type Job struct {
 	NextRunAt    time.Time      `json:"next_run_at"`
 }
 
+type JobHistory struct {
+	ID int `json:"id"`
+	JobID int `json:"job_id"`
+	RunAt time.Time `json:"run_at"`
+	Status string `json:"status"`
+	Details string `json:"details"`
+}
+
 //redis and postgres complementing each other, postgres permanently stores the data but slow for locking but redis is good for locking data if any job using it but data vanishes  if server crashes or restart because it is in memory database and we can afford losing the locks because they are temporary but not the data which is crucial so we store data in postgres here and for locking we use redis and also the queries to find specific jobs this is best to be done with postgres 
 
 var rdb *redis.Client
@@ -106,6 +114,8 @@ func main() {
 
 	//to register the route
 	http.HandleFunc("/jobs", apiHandler(db))
+	http.HandleFunc("/jobs/run", apiHandler(db))
+	http.HandleFunc("/jobs/history", apiHandler(db))
 
   go func() {
 		fmt.Println("api server started at port 8080")
@@ -251,6 +261,40 @@ func apiHandler(db *sql.DB) http.HandlerFunc {
 			return
 		}
 
+		if r.Method == "GET" && r.URL.Path == "/jobs/history" {
+			jobID := r.URL.Query().Get("job_id")
+
+			query := "SELECT id, job_id, run_at, status, details FROM job_history"
+			var rows *sql.Rows
+			var err error
+
+			if jobID != "" {
+				query += " WHERE job_id = $1 ORDER BY run_at DESC LIMIT 50"
+				rows, err = db.Query(query, jobID)
+			} else {
+				query += " ORDER BY run_at DESC LIMIT 50"
+				rows, err = db.Query(query)
+			}
+			if err != nil {
+				http.Error(w, err.Error(), http.StatusInternalServerError)
+				return
+			}
+
+			defer rows.Close()
+
+			history := []JobHistory{}
+			for rows.Next() {
+				var h JobHistory
+				if err := rows.Scan(&h.ID, &h.JobID, &h.RunAt, &h.Status, &h.Details); err != nil {
+					continue
+				}
+				history = append(history, h)
+			}
+			w.Header().Set("Content-Type", "application/json")
+			json.NewEncoder(w).Encode(history)
+			return
+		}
+
 		http.Error(w, "Method not allowed", http.StatusMethodNotAllowed)
 	}
 }
@@ -258,7 +302,7 @@ func apiHandler(db *sql.DB) http.HandlerFunc {
 
 
 func initDB(db *sql.DB) {
-	query := `
+	queryJobs := `
 	CREATE TABLE IF NOT EXISTS jobs (
 		id SERIAL PRIMARY KEY,
 		name TEXT NOT NULL,
@@ -266,10 +310,24 @@ func initDB(db *sql.DB) {
 		next_run_at TIMESTAMP NOT NULL
 	);`
 	
-	_, err := db.Exec(query)
+	_, err := db.Exec(queryJobs)
 	if err != nil {
 		log.Fatal("Failed to create table:", err)
 	}
+
+	queryHistory := `
+	CREATE TABLE IF NOT EXISTS job_history (
+	id SERIAL PRIMARY KEY,
+	job_id INTEGER REFERENCES jobs(id) ON DELETE CASCADE,
+	run_at TIMESTAMP NOT NULL,
+	status TEXT NOT NULL,
+	details TEXT
+	);`
+
+	if _,err := db.Exec(queryHistory); err != nil {
+		log.Fatal("Failed to create job_history table :", err)
+	}
+
 	fmt.Println("Database initialized (Table 'jobs' exists)")
 }
 
@@ -307,6 +365,12 @@ func processJobs(db *sql.DB) {
 		}
 
 		fmt.Printf("Executing Job [%d]: %s\n", j.ID, j.Name)
+
+		//new record history
+		_,err = db.Exec(`INSERT INTO job_history (job_id, run_at, status, details) VALUES ($1, $2, $3, $4)`, j.ID, time.Now(), "Success", "Executed via scheduler")
+		if err != nil {
+			log.Println("failed to log job history", err)
+		}
 
 		schedule, err := parser.Parse(j.CronSchedule)
 		if err != nil {
