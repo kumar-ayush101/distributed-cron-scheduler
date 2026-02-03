@@ -178,28 +178,6 @@ func apiHandler(db *sql.DB) http.HandlerFunc {
 		}
 
 
-		if r.Method == "GET" {
-			rows, err := db.Query("SELECT id, name, cron_schedule, next_run_at FROM jobs ORDER BY id DESC")
-			if err != nil {
-				http.Error(w, err.Error(), http.StatusInternalServerError)
-				return
-			}
-			defer rows.Close()
-
-			var jobs []Job
-			for rows.Next() {
-				var j Job
-				if err := rows.Scan(&j.ID, &j.Name, &j.CronSchedule, &j.NextRunAt); err != nil {
-					continue
-				}
-				jobs = append(jobs, j)
-			}
-
-			w.Header().Set("Content-Type", "application/json")
-			json.NewEncoder(w).Encode(jobs)
-			return
-		}
-
 		// POST - creating a new job
 		if r.Method == "POST" && r.URL.Path == "/jobs" {
 			var j Job
@@ -294,6 +272,29 @@ func apiHandler(db *sql.DB) http.HandlerFunc {
 			json.NewEncoder(w).Encode(history)
 			return
 		}
+
+		if r.Method == "GET" {
+			rows, err := db.Query("SELECT id, name, cron_schedule, next_run_at FROM jobs ORDER BY id DESC")
+			if err != nil {
+				http.Error(w, err.Error(), http.StatusInternalServerError)
+				return
+			}
+			defer rows.Close()
+
+			var jobs []Job
+			for rows.Next() {
+				var j Job
+				if err := rows.Scan(&j.ID, &j.Name, &j.CronSchedule, &j.NextRunAt); err != nil {
+					continue
+				}
+				jobs = append(jobs, j)
+			}
+
+			w.Header().Set("Content-Type", "application/json")
+			json.NewEncoder(w).Encode(jobs)
+			return
+		}
+
 
 		http.Error(w, "Method not allowed", http.StatusMethodNotAllowed)
 	}
