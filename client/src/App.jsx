@@ -6,6 +6,8 @@ function App() {
   const [schedule, setSchedule] = useState('*/1 * * * *')
   const [loading, setLoading] = useState(false)
 
+  //function to get the jobs
+
   const fetchJobs = async () => {
     try {
       const res = await fetch('http://localhost:8080/jobs')
@@ -21,6 +23,9 @@ function App() {
     const interval = setInterval(fetchJobs, 5000)
     return () => clearInterval(interval)
   }, [])
+
+
+  //function to add new job
 
   const handleSubmit = async (e) => {
     e.preventDefault()
@@ -50,9 +55,32 @@ function App() {
     }
   }
 
+  //function for deletion of job
+
+  const handleDelete = async (id) => {
+    if (!confirm("Are you sure you want to delete this job?")) return;
+    try {
+      await fetch(`http://localhost:8080/jobs?id=${id}`, { method: 'DELETE' })
+      fetchJobs() // Refresh list
+    } catch (err) {
+      console.error(err)
+    }
+  }
+
+  //function to run job now
+  const handleRunNow = async (id) => {
+    try {
+      await fetch(`http://localhost:8080/jobs/run?id=${id}`, { method: 'POST' })
+      alert("Job scheduled to run immediately!")
+      fetchJobs()
+    } catch (err) {
+      console.error(err)
+    }
+  }
+
   return (
     <div style={styles.container}>
-      <h1 style={styles.header}>🚀 Distributed Cron Dashboard</h1>
+      <h1 style={styles.header}>Distributed Cron Dashboard</h1>
 
       {/* Form Section */}
       <div style={styles.card}>
@@ -88,6 +116,7 @@ function App() {
               <th style={styles.th}>Name</th>
               <th style={styles.th}>Schedule</th>
               <th style={styles.th}>Next Run</th>
+              <th style={styles.th}>Actions</th> {/* NEW HEADER */}
             </tr>
           </thead>
           <tbody>
@@ -100,6 +129,23 @@ function App() {
                 </td>
                 <td style={styles.td}>
                   {new Date(job.next_run_at).toLocaleTimeString()}
+                </td>
+                {/* delete and run now button */}
+                <td style={styles.td}>
+                  <button 
+                    style={{...styles.actionButton, background: '#28a745'}} 
+                    onClick={() => handleRunNow(job.id)}
+                    title="Run Now"
+                  >
+                    ▶
+                  </button>
+                  <button 
+                    style={{...styles.actionButton, background: '#dc3545', marginLeft: '8px'}} 
+                    onClick={() => handleDelete(job.id)}
+                    title="Delete"
+                  >
+                    🗑
+                  </button>
                 </td>
               </tr>
             ))}
@@ -196,6 +242,15 @@ const styles = {
     fontWeight: 'bold',
     fontSize: '14px',
     border: '1px solid #dee2e6'
+  },
+  actionButton: {
+    border: 'none',
+    color: 'white',
+    padding: '6px 12px',
+    borderRadius: '4px',
+    cursor: 'pointer',
+    fontSize: '14px',
+    transition: 'opacity 0.2s',
   }
 }
 

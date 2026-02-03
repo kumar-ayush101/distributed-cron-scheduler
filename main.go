@@ -158,7 +158,7 @@ func apiHandler(db *sql.DB) http.HandlerFunc {
 	return func(w http.ResponseWriter, r *http.Request) {
 	
     w.Header().Set("Access-Control-Allow-Origin", "*")
-		w.Header().Set("Access-Control-Allow-Methods", "GET, POST, OPTIONS")
+		w.Header().Set("Access-Control-Allow-Methods", "GET, POST, DELETE, OPTIONS")
 		w.Header().Set("Access-Control-Allow-Headers", "Content-Type")
     
 		//handling preflight
@@ -169,7 +169,7 @@ func apiHandler(db *sql.DB) http.HandlerFunc {
 
 
 		if r.Method == "GET" {
-			rows, err := db.Query("SELECT id, name, cron_schedule, next_run_at FROM jobs")
+			rows, err := db.Query("SELECT id, name, cron_schedule, next_run_at FROM jobs ORDER BY id DESC")
 			if err != nil {
 				http.Error(w, err.Error(), http.StatusInternalServerError)
 				return
@@ -191,7 +191,7 @@ func apiHandler(db *sql.DB) http.HandlerFunc {
 		}
 
 		// POST - creating a new job
-		if r.Method == "POST" {
+		if r.Method == "POST" && r.URL.Path == "/jobs" {
 			var j Job
 			if err := json.NewDecoder(r.Body).Decode(&j); err != nil {
 				http.Error(w, "Invalid JSON", http.StatusBadRequest)
@@ -216,6 +216,38 @@ func apiHandler(db *sql.DB) http.HandlerFunc {
 
 			w.Header().Set("Content-Type", "application/json")
 			json.NewEncoder(w).Encode(j)
+			return
+		}
+
+		if r.Method == "DELETE" {
+			idStr := r.URL.Query().Get("id")
+			if idStr == "" {
+				http.Error(w, "Missing id parameter", http.StatusBadRequest)
+				return
+			}
+		_,err := db.Exec("DELETE FROM jobs WHERE id = $1", idStr)
+		if err != nil {
+			http.Error(w, err.Error(), http.StatusInternalServerError)
+			return
+		}
+		w.WriteHeader(http.StatusOK)
+		json.NewEncoder(w).Encode(map[string]string{"status":"deleted"})
+		return
+		}
+
+		if r.Method == "POST" && r.URL.Path == "/jobs/run" {
+			idStr := r.URL.Query().Get("id")
+			if idStr == "" {
+				http.Error(w, "Missiing id parameter", http.StatusBadRequest)
+				return
+			}
+			_,err := db.Exec("UPDATE jobs SET next_run_at = $1 WHERE id = $2",time.Now(), idStr)
+			if err != nil {
+				http.Error(w, err.Error(), http.StatusInternalServerError)
+				return
+			}
+			w.WriteHeader(http.StatusOK)
+			json.NewEncoder(w).Encode(map[string]string{"status":"scheduled_now"})
 			return
 		}
 
