@@ -36,6 +36,17 @@ services:
       interval: 10s
       timeout: 5s
       retries: 3
+
+  worker:
+    build: .
+    #No "ports" section! It doesn't need to listen for API requests.
+    # It just runs the scheduler loop internally.
+    depends_on:
+      - db
+      - redis
+    deploy:
+      replicas: 2  
+
     environment:
       DB_HOST: db
       DB_PORT: 5432
