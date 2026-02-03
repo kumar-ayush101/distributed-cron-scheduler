@@ -22,6 +22,19 @@ func NewHandler(db *sql.DB) http.HandlerFunc {
 			return
 		}
 
+		//health check
+
+		if r.Method == "GET" && r.URL.Path == "/health" {
+			if err := db.Ping(); err != nil {
+				w.WriteHeader(http.StatusServiceUnavailable)
+				w.Write([]byte("Database Down"))
+				return
+			}
+			w.WriteHeader(http.StatusOK)
+			w.Write([]byte("OK"))
+			return
+		}
+
 		//  GET /jobs
 		if r.Method == "GET" && r.URL.Path == "/jobs" {
 			rows, err := db.Query("SELECT id, name, cron_schedule, next_run_at FROM jobs ORDER BY id DESC")
