@@ -9,7 +9,7 @@ RUN go mod download
 
 # Copy source and build
 COPY . .
-RUN go build -o main .
+RUN go build -o main ./cmd/server
 
 # STAGE 2: Run the binary (Tiny Image)
 FROM alpine:latest
