@@ -11,6 +11,8 @@ function App() {
   const [historyLogs, setHistoryLogs] = useState([])   // The logs for that job
   const [historyLoading, setHistoryLoading] = useState(false)
 
+  // --- LOGIC STARTS HERE (UNTOUCHED) ---
+
   // 1. Fetch Jobs (Main List)
   const fetchJobs = async () => {
     try {
@@ -90,74 +92,111 @@ function App() {
     } catch (err) { console.error(err) }
   }
 
+  // logic ending here
+
   return (
     <div style={styles.container}>
-      <h1 style={styles.header}>Distributed Cron Dashboard</h1>
+      <header style={styles.header}>
+        <h1 style={styles.title}>DISTRIBUTED CRON SCHEDULER</h1>
+        <div style={styles.statusIndicator}>● ONLINE</div>
+      </header>
 
       {/* add job form */}
       <div style={styles.card}>
-        <h2 style={{marginTop: 0}}>Add New Job</h2>
+        <h2 style={styles.cardTitle}>CREATE NEW TASK</h2>
         <form onSubmit={handleSubmit} style={styles.form}>
-          <input 
-            style={styles.input}
-            placeholder="Job Name (e.g. Email Report)" 
-            value={name} onChange={(e) => setName(e.target.value)} required 
-          />
-          <input 
-            style={styles.input}
-            placeholder="Cron Schedule (e.g. */5 * * * *)" 
-            value={schedule} onChange={(e) => setSchedule(e.target.value)} required 
-          />
-          <button style={styles.button} type="submit" disabled={loading}>
-            {loading ? 'Scheduling...' : 'Schedule Job'}
-          </button>
+          <div style={styles.inputGroup}>
+            <label style={styles.label}>TASK NAME</label>
+            <input 
+              style={styles.input}
+              placeholder="e.g. Database Backup" 
+              value={name} onChange={(e) => setName(e.target.value)} required 
+            />
+          </div>
+          <div style={styles.inputGroup}>
+             <label style={styles.label}>CRON EXPRESSION</label>
+            <input 
+              style={styles.input}
+              placeholder="e.g. */5 * * * *" 
+              value={schedule} onChange={(e) => setSchedule(e.target.value)} required 
+            />
+          </div>
+          <div style={{display: 'flex', alignItems: 'flex-end'}}>
+             <button style={styles.primaryButton} type="submit" disabled={loading}>
+              {loading ? 'PROCESSING...' : 'INITIALIZE TASK'}
+            </button>
+          </div>
         </form>
       </div>
 
       {/* active jobs list */}
       <div style={styles.card}>
-        <h2 style={{marginTop: 0}}>Active Jobs ({jobs.length})</h2>
-        <table style={styles.table}>
-          <thead>
-            <tr>
-              <th style={styles.th}>ID</th>
-              <th style={styles.th}>Name</th>
-              <th style={styles.th}>Schedule</th>
-              <th style={styles.th}>Next Run</th>
-              <th style={styles.th}>Actions</th>
-            </tr>
-          </thead>
-          <tbody>
-            {jobs.map((job) => (
-              <tr key={job.id} style={styles.tr}>
-                <td style={styles.td}><b>#{job.id}</b></td>
-                <td style={styles.td}>{job.name}</td>
-                <td style={styles.td}><span style={styles.cronBadge}>{job.cron_schedule}</span></td>
-                <td style={styles.td}>{new Date(job.next_run_at).toLocaleTimeString()}</td>
-                <td style={styles.td}>
-                  {/* run now */}
-                  <button 
-                    style={{...styles.actionButton, background: '#28a745'}} 
-                    onClick={() => handleRunNow(job.id)}
-                    title="Run Now"
-                  >▶</button>
-                  {/* history menu */}
-                  <button 
-                    style={{...styles.actionButton, background: '#17a2b8', marginLeft: '8px'}} 
-                    onClick={() => handleShowHistory(job)}
-                    title="View History"
-                  >📜</button>
-                  {/* delete */}
-                  <button 
-                    style={{...styles.actionButton, background: '#dc3545', marginLeft: '8px'}} 
-                    onClick={() => handleDelete(job.id)}
-                    title="Delete"
-                  >🗑</button>
-                </td>
-              </tr>
-            ))}
-          </tbody>
-        </table>
+        <div style={styles.cardHeader}>
+            <h2 style={styles.cardTitle}>ACTIVE WORKERS ({jobs.length})</h2>
+        </div>
+        
+        <div style={{overflowX: 'auto'}}>
+            <table style={styles.table}>
+            <thead>
+                <tr>
+                <th style={styles.th}>ID</th>
+                <th style={styles.th}>OPERATION</th>
+                <th style={styles.th}>SCHEDULE</th>
+                <th style={styles.th}>NEXT EXECUTION</th>
+                <th style={styles.thRight}>CONTROLS</th>
+                </tr>
+            </thead>
+            <tbody>
+                {jobs.map((job) => (
+                <tr key={job.id} style={styles.tr}>
+                    <td style={styles.td}>
+                        <span style={styles.idBadge}>#{job.id}</span>
+                    </td>
+                    <td style={styles.td}><b>{job.name}</b></td>
+                    <td style={styles.td}>
+                        <span style={styles.cronText}>{job.cron_schedule}</span>
+                    </td>
+                    <td style={styles.td}>{new Date(job.next_run_at).toLocaleString()}</td>
+                    <td style={styles.tdRight}>
+                    <div style={styles.actionGroup}>
+                        {/* run now */}
+                        <button 
+                            style={styles.iconButton} 
+                            onClick={() => handleRunNow(job.id)}
+                            title="Run Now"
+                        >
+                            RUN ▷
+                        </button>
+                        {/* history menu */}
+                        <button 
+                            style={styles.iconButton} 
+                            onClick={() => handleShowHistory(job)}
+                            title="View History"
+                        >
+                            LOGS ☰
+                        </button>
+                        {/* delete */}
+                        <button 
+                            style={styles.deleteButton} 
+                            onClick={() => handleDelete(job.id)}
+                            title="Delete"
+                        >
+                            DEL ✕
+                        </button>
+                    </div>
+                    </td>
+                </tr>
+                ))}
+                {jobs.length === 0 && (
+                    <tr>
+                        <td colSpan="5" style={{...styles.td, textAlign: 'center', padding: '40px', color: '#888'}}>
+                            NO ACTIVE TASKS FOUND
+                        </td>
+                    </tr>
+                )}
+            </tbody>
+            </table>
+        </div>
       </div>
 
       {/* history modal */}
@@ -165,40 +204,43 @@ function App() {
         <div style={styles.modalOverlay}>
           <div style={styles.modalContent}>
             <div style={styles.modalHeader}>
-              <h3>History: {selectedJob.name}</h3>
-              <button onClick={closeModal} style={styles.closeButton}>×</button>
+              <h3 style={{margin: 0, textTransform: 'uppercase'}}>
+                LOGS: <span style={{color: '#666'}}>{selectedJob.name}</span>
+              </h3>
+              <button onClick={closeModal} style={styles.closeButton}>CLOSE [ESC]</button>
             </div>
             
             {historyLoading ? (
-              <p>Loading history...</p>
+              <div style={styles.loadingState}>FETCHING DATA...</div>
             ) : (
               <div style={styles.tableWrapper}>
                 <table style={styles.table}>
                   <thead>
                     <tr>
-                      <th style={styles.th}>Run At</th>
-                      <th style={styles.th}>Status</th>
-                      <th style={styles.th}>Details</th>
+                      <th style={styles.th}>TIMESTAMP</th>
+                      <th style={styles.th}>STATUS</th>
+                      <th style={styles.th}>OUTPUT</th>
                     </tr>
                   </thead>
                   <tbody>
                     {historyLogs.map((log) => (
-                      <tr key={log.id}>
-                        <td style={styles.td}>{new Date(log.run_at).toLocaleString()}</td>
-                        <td style={styles.td}>
+                      <tr key={log.id} style={styles.tr}>
+                        <td style={styles.tdLogs}>{new Date(log.run_at).toLocaleString()}</td>
+                        <td style={styles.tdLogs}>
                           <span style={{
                             ...styles.statusBadge, 
-                            background: log.status === 'Success' ? '#d4edda' : '#f8d7da',
-                            color: log.status === 'Success' ? '#155724' : '#721c24'
+                            border: log.status === 'Success' ? '1px solid #000' : '1px solid #000',
+                            backgroundColor: log.status === 'Success' ? '#fff' : '#000',
+                            color: log.status === 'Success' ? '#000' : '#fff',
                           }}>
-                            {log.status}
+                            {log.status === 'Success' ? 'SUCCESS' : 'FAILURE'}
                           </span>
                         </td>
-                        <td style={styles.td}>{log.details}</td>
+                        <td style={{...styles.tdLogs, fontFamily: 'monospace'}}>{log.details}</td>
                       </tr>
                     ))}
                     {historyLogs.length === 0 && (
-                      <tr><td colSpan="3" style={styles.td}>No history found.</td></tr>
+                      <tr><td colSpan="3" style={styles.td}>No execution history recorded.</td></tr>
                     )}
                   </tbody>
                 </table>
@@ -211,28 +253,246 @@ function App() {
   )
 }
 
-// STYLES
+// MODERN BLACK & WHITE STYLES
 const styles = {
-  container: { maxWidth: '900px', margin: '0 auto', padding: '40px 20px', fontFamily: "'Segoe UI', Roboto, Helvetica, Arial, sans-serif", backgroundColor: '#eef2f5', minHeight: '100vh' },
-  header: { textAlign: 'center', color: '#2c3e50', marginBottom: '30px', fontSize: '2.5rem' },
-  card: { background: 'white', padding: '25px', borderRadius: '12px', boxShadow: '0 4px 6px rgba(0,0,0,0.05)', marginBottom: '30px', border: '1px solid #e1e4e8' },
-  form: { display: 'flex', gap: '15px', flexWrap: 'wrap' },
-  input: { flex: 1, padding: '12px 15px', borderRadius: '6px', border: '2px solid #e1e4e8', fontSize: '16px', outline: 'none' },
-  button: { padding: '12px 25px', background: '#007bff', color: 'white', border: 'none', borderRadius: '6px', cursor: 'pointer', fontWeight: 'bold', fontSize: '16px' },
-  table: { width: '100%', borderCollapse: 'separate', borderSpacing: '0', marginTop: '15px', border: '1px solid #e1e4e8', borderRadius: '8px', overflow: 'hidden' },
-  th: { textAlign: 'left', padding: '15px', background: '#007bff', color: 'white', fontWeight: '600', borderBottom: '2px solid #0056b3' },
-  td: { padding: '12px 15px', borderBottom: '1px solid #eee', color: '#333' },
-  tr: { backgroundColor: '#fff' },
-  cronBadge: { background: '#f1f3f5', color: '#c92a2a', padding: '4px 8px', borderRadius: '4px', fontFamily: 'monospace', fontWeight: 'bold', fontSize: '14px', border: '1px solid #dee2e6' },
-  actionButton: { border: 'none', color: 'white', padding: '6px 12px', borderRadius: '4px', cursor: 'pointer', fontSize: '14px', transition: 'opacity 0.2s' },
+  container: { 
+    maxWidth: '1000px', 
+    margin: '0 auto', 
+    padding: '40px 20px', 
+    fontFamily: "'Inter', 'Segoe UI', sans-serif", 
+    backgroundColor: '#fff', 
+    color: '#000', 
+    minHeight: '100vh',
+    letterSpacing: '-0.02em'
+  },
+  header: { 
+    display: 'flex', 
+    justifyContent: 'space-between', 
+    alignItems: 'center', 
+    borderBottom: '2px solid #000', 
+    paddingBottom: '20px', 
+    marginBottom: '40px' 
+  },
+  title: { 
+    margin: 0, 
+    fontSize: '1.5rem', 
+    fontWeight: '800', 
+    letterSpacing: '-0.05em' 
+  },
+  statusIndicator: { 
+    fontSize: '0.8rem', 
+    fontWeight: 'bold', 
+    border: '1px solid #000', 
+    padding: '4px 8px', 
+    borderRadius: '50px' 
+  },
   
-  // modal styles
-  modalOverlay: { position: 'fixed', top: 0, left: 0, right: 0, bottom: 0, backgroundColor: 'rgba(0,0,0,0.5)', display: 'flex', justifyContent: 'center', alignItems: 'center', zIndex: 1000 },
-  modalContent: { background: 'white', padding: '20px', borderRadius: '8px', width: '90%', maxWidth: '600px', maxHeight: '80vh', overflowY: 'auto', boxShadow: '0 5px 15px rgba(0,0,0,0.3)' },
-  modalHeader: { display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginBottom: '20px', borderBottom: '1px solid #eee', paddingBottom: '10px' },
-  closeButton: { background: 'none', border: 'none', fontSize: '24px', cursor: 'pointer', color: '#666' },
-  statusBadge: { padding: '4px 8px', borderRadius: '12px', fontSize: '12px', fontWeight: 'bold' },
-  tableWrapper: { maxHeight: '60vh', overflowY: 'auto' }
+  // Cards
+  card: { 
+    border: '1px solid #000', 
+    padding: '0', 
+    marginBottom: '40px', 
+    backgroundColor: '#fff' 
+  },
+  cardHeader: {
+    padding: '20px',
+    borderBottom: '1px solid #000',
+    backgroundColor: '#fafafa'
+  },
+  cardTitle: { 
+    margin: 0, 
+    fontSize: '1rem', 
+    fontWeight: '700', 
+    textTransform: 'uppercase', 
+    letterSpacing: '0.05em' 
+  },
+  
+  // Form
+  form: { 
+    display: 'flex', 
+    gap: '20px', 
+    padding: '20px', 
+    flexWrap: 'wrap',
+    alignItems: 'flex-end'
+  },
+  inputGroup: {
+    flex: 1,
+    display: 'flex',
+    flexDirection: 'column',
+    gap: '8px',
+    minWidth: '200px'
+  },
+  label: {
+    fontSize: '0.75rem',
+    fontWeight: 'bold',
+    color: '#666'
+  },
+  input: { 
+    padding: '12px', 
+    border: '1px solid #000', 
+    fontSize: '0.9rem', 
+    outline: 'none',
+    fontFamily: 'monospace',
+    backgroundColor: '#fff',
+    borderRadius: 0, // Sharp edges
+  },
+  primaryButton: { 
+    padding: '12px 24px', 
+    background: '#000', 
+    color: '#fff', 
+    border: '1px solid #000', 
+    cursor: 'pointer', 
+    fontWeight: 'bold', 
+    fontSize: '0.85rem',
+    textTransform: 'uppercase',
+    minWidth: '150px',
+    transition: 'background 0.2s'
+  },
+
+  // Table
+  table: { 
+    width: '100%', 
+    borderCollapse: 'collapse', 
+    fontSize: '0.9rem' 
+  },
+  th: { 
+    textAlign: 'left', 
+    padding: '15px 20px', 
+    borderBottom: '1px solid #000', 
+    fontWeight: '700', 
+    fontSize: '0.75rem', 
+    textTransform: 'uppercase', 
+    color: '#666'
+  },
+  thRight: { 
+    textAlign: 'right', 
+    padding: '15px 20px', 
+    borderBottom: '1px solid #000', 
+    fontWeight: '700', 
+    fontSize: '0.75rem', 
+    textTransform: 'uppercase', 
+    color: '#666'
+  },
+  td: { 
+    padding: '15px 20px', 
+    borderBottom: '1px solid #eee', 
+    color: '#000',
+    verticalAlign: 'middle'
+  },
+  tdLogs: {
+    padding: '12px 20px', 
+    borderBottom: '1px solid #eee', 
+    color: '#000',
+    fontSize: '0.85rem'
+  },
+  tdRight: {
+    padding: '15px 20px', 
+    borderBottom: '1px solid #eee', 
+    textAlign: 'right'
+  },
+  tr: { 
+    transition: 'background 0.1s' 
+  },
+  
+  // Badges & Text
+  idBadge: { 
+    fontFamily: 'monospace', 
+    color: '#888' 
+  },
+  cronText: { 
+    fontFamily: 'monospace', 
+    background: '#eee', 
+    padding: '2px 6px', 
+    fontSize: '0.85rem' 
+  },
+  
+  // Actions
+  actionGroup: {
+    display: 'flex',
+    gap: '10px',
+    justifyContent: 'flex-end'
+  },
+  iconButton: { 
+    background: 'transparent', 
+    border: '1px solid #ddd', 
+    color: '#000', 
+    padding: '6px 12px', 
+    cursor: 'pointer', 
+    fontSize: '0.75rem', 
+    fontWeight: 'bold',
+    transition: 'all 0.2s',
+    borderRadius: 0
+  },
+  deleteButton: {
+    background: '#000', 
+    border: '1px solid #000', 
+    color: '#fff', 
+    padding: '6px 12px', 
+    cursor: 'pointer', 
+    fontSize: '0.75rem', 
+    fontWeight: 'bold',
+    borderRadius: 0
+  },
+
+  // Modal
+  modalOverlay: { 
+    position: 'fixed', 
+    top: 0, 
+    left: 0, 
+    right: 0, 
+    bottom: 0, 
+    backgroundColor: 'rgba(255,255,255,0.9)', 
+    backdropFilter: 'blur(2px)',
+    display: 'flex', 
+    justifyContent: 'center', 
+    alignItems: 'center', 
+    zIndex: 1000 
+  },
+  modalContent: { 
+    background: '#fff', 
+    border: '2px solid #000',
+    padding: '0', 
+    width: '90%', 
+    maxWidth: '700px', 
+    maxHeight: '80vh', 
+    overflowY: 'auto', 
+    boxShadow: '20px 20px 0px rgba(0,0,0,0.1)' 
+  },
+  modalHeader: { 
+    display: 'flex', 
+    justifyContent: 'space-between', 
+    alignItems: 'center', 
+    padding: '20px', 
+    borderBottom: '1px solid #000',
+    backgroundColor: '#fafafa'
+  },
+  closeButton: { 
+    background: 'none', 
+    border: 'none', 
+    fontSize: '0.85rem', 
+    fontWeight: 'bold',
+    cursor: 'pointer', 
+    textDecoration: 'underline' 
+  },
+  statusBadge: { 
+    padding: '4px 8px', 
+    fontSize: '0.75rem', 
+    fontWeight: 'bold',
+    textTransform: 'uppercase',
+    display: 'inline-block',
+    minWidth: '80px',
+    textAlign: 'center'
+  },
+  tableWrapper: { 
+    maxHeight: '60vh', 
+    overflowY: 'auto' 
+  },
+  loadingState: {
+    padding: '40px',
+    textAlign: 'center',
+    color: '#666',
+    fontStyle: 'italic'
+  }
 }
 
 export default App

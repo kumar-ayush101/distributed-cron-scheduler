@@ -31,6 +31,14 @@ services:
     depends_on:
       - db
       - redis
+    environment:
+      DB_HOST: db
+      DB_PORT: 5432
+      DB_USER: postgres
+      DB_PASSWORD: secret
+      DB_NAME: postgres
+      REDIS_HOST: redis
+      REDIS_PORT: 6379  
     healthcheck:
       test: ["CMD", "wget", "--spider", "-q", "http://localhost:8080/health"]
       interval: 10s

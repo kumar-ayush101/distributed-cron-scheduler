@@ -9,16 +9,17 @@ import (
 	"os/signal"
 	"syscall"
 	"time"
+
 	"github.com/kumar-ayush101/distributed-cron-scheduler/internal/api"
 	"github.com/kumar-ayush101/distributed-cron-scheduler/internal/database"
 	"github.com/kumar-ayush101/distributed-cron-scheduler/internal/scheduler"
 )
 
 func main() {
-	// initializing dependencies
+
 	db := database.ConnectPostgres()
 	defer db.Close()
-	
+
 	rdb := database.ConnectRedis()
 	defer rdb.Close()
 
@@ -31,18 +32,23 @@ func main() {
 	ctx, cancel := context.WithCancel(context.Background())
 	defer cancel()
 
-	// starting scheduler 
+	// starting scheduler
 	cronService := scheduler.New(db, rdb)
 	go cronService.Start(ctx)
 
-	// starting API Server 
+	// Creating a new ServeMux (Router) instead of using the global default
+	mux := http.NewServeMux()
+
+	handler := api.NewHandler(db)
+	mux.HandleFunc("/", handler)
+
+	// wrap the entire mux with the CORS middleware
+	corsHandler := enableCORS(mux)
+
 	srv := &http.Server{
 		Addr:    ":8080",
-		Handler: nil, // We use http.HandleFunc below
+		Handler: corsHandler, //  CORS-wrapped router
 	}
-	
-	handler := api.NewHandler(db)
-	http.HandleFunc("/", handler) // Catch-all handler
 
 	go func() {
 		fmt.Println("API server started at port 8080")
@@ -51,12 +57,13 @@ func main() {
 		}
 	}()
 
+
 	// waiting for shutdown signal
 	sig := <-sigChan
 	fmt.Printf("\n Received signal: %v. Shutting down...\n", sig)
-	
+
 	cancel() // stops scheduler loop
-	
+
 	shutdownCtx, shutdownCancel := context.WithTimeout(context.Background(), 5*time.Second)
 	defer shutdownCancel()
 
@@ -65,4 +72,21 @@ func main() {
 	}
 
 	fmt.Println("Bye, closing the program")
+}
+
+// enableCORS middleware
+func enableCORS(next http.Handler) http.Handler {
+	return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		w.Header().Set("Access-Control-Allow-Origin", "*")
+		w.Header().Set("Access-Control-Allow-Methods", "GET, POST, PUT, DELETE, OPTIONS")
+		w.Header().Set("Access-Control-Allow-Headers", "Content-Type, Authorization")
+
+		// Handling Preflight requests 
+		if r.Method == "OPTIONS" {
+			w.WriteHeader(http.StatusOK)
+			return
+		}
+
+		next.ServeHTTP(w, r)
+	})
 }
