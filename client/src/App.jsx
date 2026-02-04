@@ -6,7 +6,7 @@ function App() {
   const [schedule, setSchedule] = useState('*/1 * * * *')
   const [loading, setLoading] = useState(false)
 
-  // NEW STATE FOR HISTORY MODAL
+  // new state for history model
   const [selectedJob, setSelectedJob] = useState(null) // Which job is clicked
   const [historyLogs, setHistoryLogs] = useState([])   // The logs for that job
   const [historyLoading, setHistoryLoading] = useState(false)
