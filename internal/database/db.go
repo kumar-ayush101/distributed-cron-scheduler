@@ -1,105 +1,105 @@
+// Package database manages the PostgreSQL connection pool, schema migrations
+// and optional seed data.
 package database
 
 import (
+	"context"
 	"database/sql"
 	"fmt"
-	"log"
-	"os"
 	"time"
-	
+
 	_ "github.com/lib/pq"
-	"github.com/redis/go-redis/v9"
 )
 
-// connectPostgres handling the retry logic and connection
-func ConnectPostgres() *sql.DB {
-	dbHost := os.Getenv("DB_HOST")
-	if dbHost == "" { dbHost = "localhost" }
-	dbPort := os.Getenv("DB_PORT")
-	if dbPort == "" { dbPort = "5432" }
-	dbUser := os.Getenv("DB_USER")
-	if dbUser == "" { dbUser = "postgres" }
-	dbPassword := os.Getenv("DB_PASSWORD")
-	if dbPassword == "" { dbPassword = "secret" }
-	dbName := os.Getenv("DB_NAME")
-	if dbName == "" { dbName = "postgres" }
-
-	connStr := fmt.Sprintf("postgres://%s:%s@%s:%s/%s?sslmode=disable",
-		dbUser, dbPassword, dbHost, dbPort, dbName)
-	
-	db, err := sql.Open("postgres", connStr)
+// Open creates a configured, verified connection pool.
+func Open(ctx context.Context, dsn string, maxOpen, maxIdle int, maxLifetime time.Duration) (*sql.DB, error) {
+	db, err := sql.Open("postgres", dsn)
 	if err != nil {
-		log.Fatal(err)
+		return nil, fmt.Errorf("open db: %w", err)
 	}
+	db.SetMaxOpenConns(maxOpen)
+	db.SetMaxIdleConns(maxIdle)
+	db.SetConnMaxLifetime(maxLifetime)
 
-	// retry logic
-	for i := 0; i < 5; i++ {
-		if err := db.Ping(); err == nil {
-			fmt.Println("Connected to Postgres!")
-			return db
+	// Retry ping to tolerate databases that are still starting up.
+	var lastErr error
+	for i := 0; i < 10; i++ {
+		pctx, cancel := context.WithTimeout(ctx, 3*time.Second)
+		err := db.PingContext(pctx)
+		cancel()
+		if err == nil {
+			return db, nil
 		}
-		fmt.Println("Waiting for DB...")
-		time.Sleep(2 * time.Second)
+		lastErr = err
+		select {
+		case <-ctx.Done():
+			_ = db.Close()
+			return nil, ctx.Err()
+		case <-time.After(2 * time.Second):
+		}
 	}
-	log.Fatal("Could not connect to Postgres after retries")
+	_ = db.Close()
+	return nil, fmt.Errorf("database unreachable after retries: %w", lastErr)
+}
+
+// Migrate creates or upgrades the schema. It is idempotent.
+func Migrate(ctx context.Context, db *sql.DB) error {
+	stmts := []string{
+		`CREATE TABLE IF NOT EXISTS jobs (
+			id            BIGSERIAL PRIMARY KEY,
+			name          TEXT        NOT NULL,
+			cron_schedule TEXT        NOT NULL,
+			status        TEXT        NOT NULL DEFAULT 'active',
+			next_run_at   TIMESTAMPTZ NOT NULL,
+			last_run_at   TIMESTAMPTZ,
+			run_count     BIGINT      NOT NULL DEFAULT 0,
+			fail_count    BIGINT      NOT NULL DEFAULT 0,
+			created_at    TIMESTAMPTZ NOT NULL DEFAULT now(),
+			updated_at    TIMESTAMPTZ NOT NULL DEFAULT now()
+		)`,
+		`CREATE TABLE IF NOT EXISTS job_history (
+			id          BIGSERIAL PRIMARY KEY,
+			job_id      BIGINT      NOT NULL REFERENCES jobs(id) ON DELETE CASCADE,
+			run_at      TIMESTAMPTZ NOT NULL,
+			status      TEXT        NOT NULL,
+			duration_ms BIGINT      NOT NULL DEFAULT 0,
+			node_id     TEXT        NOT NULL DEFAULT '',
+			details     TEXT        NOT NULL DEFAULT ''
+		)`,
+		`CREATE INDEX IF NOT EXISTS idx_jobs_next_run ON jobs (next_run_at) WHERE status = 'active'`,
+		`CREATE INDEX IF NOT EXISTS idx_history_job_id ON job_history (job_id, run_at DESC)`,
+	}
+	for _, s := range stmts {
+		if _, err := db.ExecContext(ctx, s); err != nil {
+			return fmt.Errorf("migrate: %w", err)
+		}
+	}
 	return nil
 }
 
-// connectRedis handling redis connection
-func ConnectRedis() *redis.Client {
-	redisHost := os.Getenv("REDIS_HOST")
-	if redisHost == "" { redisHost = "localhost" }
-	redisPort := os.Getenv("REDIS_PORT")
-	if redisPort == "" { redisPort = "6379" }
-
-	rdb := redis.NewClient(&redis.Options{
-		Addr: fmt.Sprintf("%s:%s", redisHost, redisPort),
-	})
-	
-	fmt.Println("Connected to Redis")
-	return rdb
-}
-
-// InitSchema creating the tables
-func InitSchema(db *sql.DB) {
-	queryJobs := `
-	CREATE TABLE IF NOT EXISTS jobs (
-		id SERIAL PRIMARY KEY,
-		name TEXT NOT NULL,
-		cron_schedule TEXT NOT NULL,
-		next_run_at TIMESTAMP NOT NULL
-	);`
-	if _, err := db.Exec(queryJobs); err != nil {
-		log.Fatal("Failed to create jobs table:", err)
-	}
-
-	queryHistory := `
-	CREATE TABLE IF NOT EXISTS job_history (
-		id SERIAL PRIMARY KEY,
-		job_id INTEGER REFERENCES jobs(id) ON DELETE CASCADE,
-		run_at TIMESTAMP NOT NULL,
-		status TEXT NOT NULL,
-		details TEXT
-	);`
-	if _, err := db.Exec(queryHistory); err != nil {
-		log.Fatal("Failed to create job_history table:", err)
-	}
-}
-
-//seedJobs inserting initial data
-func SeedJobs(db *sql.DB) {
+// Seed inserts a couple of demonstration jobs when the table is empty.
+func Seed(ctx context.Context, db *sql.DB) error {
 	var count int
-	_ = db.QueryRow("SELECT COUNT(*) FROM jobs WHERE name = $1", "Send Email").Scan(&count)
-	if count == 0 {
-		_, _ = db.Exec(`INSERT INTO jobs (name, cron_schedule, next_run_at) VALUES ($1, $2, $3)`,
-			"Send Email", "*/1 * * * *", time.Now())
-		fmt.Println("Inserted job: 'Send Email'")
+	if err := db.QueryRowContext(ctx, "SELECT COUNT(*) FROM jobs").Scan(&count); err != nil {
+		return fmt.Errorf("seed count: %w", err)
 	}
-
-	_ = db.QueryRow("SELECT COUNT(*) FROM jobs WHERE name = $1", "Database Backup").Scan(&count)
-	if count == 0 {
-		_, _ = db.Exec(`INSERT INTO jobs (name, cron_schedule, next_run_at) VALUES ($1, $2, $3)`,
-			"Database Backup", "*/2 * * * *", time.Now())
-		fmt.Println("Inserted job: 'Database Backup'")
+	if count > 0 {
+		return nil
 	}
+	seeds := []struct {
+		name string
+		cron string
+	}{
+		{"Send Digest Email", "*/1 * * * *"},
+		{"Database Backup", "*/5 * * * *"},
+		{"Cache Warmup", "*/2 * * * *"},
+	}
+	for _, s := range seeds {
+		if _, err := db.ExecContext(ctx,
+			`INSERT INTO jobs (name, cron_schedule, status, next_run_at)
+			 VALUES ($1, $2, 'active', now())`, s.name, s.cron); err != nil {
+			return fmt.Errorf("seed insert: %w", err)
+		}
+	}
+	return nil
 }

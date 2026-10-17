@@ -1,97 +1,174 @@
+// Package scheduler contains the polling engine that discovers due jobs,
+// acquires a distributed lock per job, executes it exactly once across the
+// cluster, records history and reschedules the next run.
 package scheduler
 
 import (
 	"context"
-	"database/sql"
 	"fmt"
-	"log"
+	"log/slog"
 	"time"
 
-	"github.com/kumar-ayush101/distributed-cron-scheduler/internal/models" 
-	"github.com/redis/go-redis/v9"
-	"github.com/robfig/cron/v3"
+	"github.com/kumar-ayush101/distributed-cron-scheduler/internal/lock"
+	"github.com/kumar-ayush101/distributed-cron-scheduler/internal/metrics"
+	"github.com/kumar-ayush101/distributed-cron-scheduler/internal/models"
+	"github.com/kumar-ayush101/distributed-cron-scheduler/internal/repository"
 )
 
+// Executor runs the side effect of a job. In this reference implementation it
+// is a stub, but it is injectable so real work (HTTP calls, queue publishes,
+// shell commands) can be plugged in and unit-tested.
+type Executor func(ctx context.Context, job models.Job) error
+
+// defaultExecutor simulates a small unit of work.
+func defaultExecutor(_ context.Context, _ models.Job) error { return nil }
+
+// Service is the scheduling engine.
 type Service struct {
-	DB  *sql.DB
-	RDB *redis.Client
+	repo     *repository.JobRepository
+	locker   lock.Locker
+	log      *slog.Logger
+	metrics  *metrics.Collectors
+	nodeID   string
+	interval time.Duration
+	lockTTL  time.Duration
+	batch    int
+	execute  Executor
 }
 
-func New(db *sql.DB, rdb *redis.Client) *Service {
-	return &Service{DB: db, RDB: rdb}
+// Options configures the scheduler.
+type Options struct {
+	NodeID       string
+	PollInterval time.Duration
+	LockTTL      time.Duration
+	Batch        int
+	Executor     Executor
 }
 
-// start runs the ticker loop.This is a blocking function, so we run it in goroutine
-func (s *Service) Start(ctx context.Context) {
-	ticker := time.NewTicker(10 * time.Second)
+// New builds a scheduler Service.
+func New(repo *repository.JobRepository, locker lock.Locker, log *slog.Logger, m *metrics.Collectors, opts Options) *Service {
+	if opts.Batch <= 0 {
+		opts.Batch = 100
+	}
+	exec := opts.Executor
+	if exec == nil {
+		exec = defaultExecutor
+	}
+	return &Service{
+		repo:     repo,
+		locker:   locker,
+		log:      log.With("component", "scheduler"),
+		metrics:  m,
+		nodeID:   opts.NodeID,
+		interval: opts.PollInterval,
+		lockTTL:  opts.LockTTL,
+		batch:    opts.Batch,
+		execute:  exec,
+	}
+}
+
+// Run blocks until ctx is cancelled, polling for due jobs each interval.
+func (s *Service) Run(ctx context.Context) {
+	s.log.Info("scheduler started", "node_id", s.nodeID, "interval", s.interval.String(), "lock_backend", s.locker.Kind())
+	if s.metrics != nil {
+		s.metrics.ActiveNodes.Set(1)
+	}
+	ticker := time.NewTicker(s.interval)
 	defer ticker.Stop()
-
-	fmt.Println("Scheduler started. Waiting for jobs...")
-
 	for {
 		select {
-		case t := <-ticker.C:
-			fmt.Println("\nTick at", t.Format("15:04:05"))
-			s.ProcessJobs()
 		case <-ctx.Done():
-			fmt.Println("Stopping scheduler loop")
+			s.log.Info("scheduler stopping")
+			if s.metrics != nil {
+				s.metrics.ActiveNodes.Set(0)
+			}
 			return
+		case <-ticker.C:
+			s.tick(ctx)
 		}
 	}
 }
 
-func (s *Service) ProcessJobs() {
-	rows, err := s.DB.Query("SELECT id, name, cron_schedule, next_run_at FROM jobs WHERE next_run_at <= $1", time.Now())
+func (s *Service) tick(ctx context.Context) {
+	jobs, err := s.repo.DueJobs(ctx, time.Now(), s.batch)
 	if err != nil {
-		log.Println("Error querying jobs:", err)
+		s.log.Error("failed to query due jobs", "error", err)
 		return
 	}
-	defer rows.Close()
-
-	parser := cron.NewParser(cron.Minute | cron.Hour | cron.Dom | cron.Month | cron.Dow)
-	ctx := context.Background()
-
-	for rows.Next() {
-		var j models.Job
-		if err := rows.Scan(&j.ID, &j.Name, &j.CronSchedule, &j.NextRunAt); err != nil {
-			log.Println("Error scanning job:", err)
-			continue
-		}
-
-		// Redis Lock
-		lockKey := fmt.Sprintf("job_lock:%d", j.ID)
-		isLocked, err := s.RDB.SetNX(ctx, lockKey, "locked", 10*time.Second).Result()
-		if err != nil {
-			log.Println("Redis error:", err)
-			continue
-		}
-		if !isLocked {
-			fmt.Printf("Job [%d] locked by another node, skipping\n", j.ID)
-			continue
-		}
-
-		fmt.Printf("Executing Job [%d]: %s\n", j.ID, j.Name)
-
-		// history recording
-		_, err = s.DB.Exec(`INSERT INTO job_history (job_id, run_at, status, details) VALUES ($1, $2, $3, $4)`,
-			j.ID, time.Now(), "Success", "Executed via scheduler")
-		if err != nil {
-			log.Println("Failed to log history:", err)
-		}
-
-		// calculating next run
-		schedule, err := parser.Parse(j.CronSchedule)
-		if err != nil {
-			fmt.Printf("Error parsing cron: %v\n", err)
-			continue
-		}
-		nextTime := schedule.Next(time.Now())
-
-		// updating job
-		_, err = s.DB.Exec("UPDATE jobs SET next_run_at = $1 WHERE id = $2", nextTime, j.ID)
-		if err != nil {
-			log.Println("Failed to update job:", err)
-		}
-		fmt.Printf("Rescheduled for: %v\n", nextTime.Format(time.Kitchen))
+	for _, job := range jobs {
+		s.processJob(ctx, job)
 	}
+}
+
+// processJob attempts to run a single job under a distributed lock.
+func (s *Service) processJob(ctx context.Context, job models.Job) {
+	lockKey := fmt.Sprintf("cron:job:%d", job.ID)
+	ok, release, err := s.locker.Acquire(ctx, lockKey)
+	if err != nil {
+		s.log.Error("lock acquisition failed", "job_id", job.ID, "error", err)
+		return
+	}
+	if !ok {
+		if s.metrics != nil {
+			s.metrics.LockConflicts.Inc()
+		}
+		s.log.Debug("job locked by another node, skipping", "job_id", job.ID)
+		return
+	}
+	defer release()
+
+	// Re-read the job to avoid a stale double-run: another node may have
+	// executed and rescheduled it between our query and lock acquisition.
+	fresh, err := s.repo.GetByID(ctx, job.ID)
+	if err != nil {
+		s.log.Error("failed to reload job", "job_id", job.ID, "error", err)
+		return
+	}
+	if fresh.NextRunAt.After(time.Now()) {
+		s.log.Debug("job already rescheduled by peer, skipping", "job_id", job.ID)
+		return
+	}
+
+	s.runOnce(ctx, fresh)
+}
+
+func (s *Service) runOnce(ctx context.Context, job models.Job) {
+	start := time.Now()
+	execErr := s.execute(ctx, job)
+	duration := time.Since(start)
+	success := execErr == nil
+
+	status := models.ExecSuccess
+	details := "executed successfully"
+	if !success {
+		status = models.ExecFailed
+		details = execErr.Error()
+	}
+
+	if s.metrics != nil {
+		s.metrics.JobsExecuted.WithLabelValues(string(status)).Inc()
+		s.metrics.JobDuration.Observe(duration.Seconds())
+	}
+
+	_ = s.repo.AddHistory(ctx, models.JobHistory{
+		JobID:      job.ID,
+		RunAt:      start,
+		Status:     status,
+		DurationMS: duration.Milliseconds(),
+		NodeID:     s.nodeID,
+		Details:    details,
+	})
+
+	next, err := models.NextRun(job.CronSchedule, time.Now())
+	if err != nil {
+		s.log.Error("invalid cron while rescheduling", "job_id", job.ID, "error", err)
+		return
+	}
+	if err := s.repo.MarkRun(ctx, job.ID, start, next, success); err != nil {
+		s.log.Error("failed to mark run", "job_id", job.ID, "error", err)
+		return
+	}
+	s.log.Info("job executed",
+		"job_id", job.ID, "name", job.Name, "status", status,
+		"duration_ms", duration.Milliseconds(), "next_run", next.Format(time.RFC3339))
 }

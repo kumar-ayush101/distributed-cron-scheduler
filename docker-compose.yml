@@ -1,69 +1,75 @@
-version: '3.8'
+# Local multi-node cluster for development and demos.
+#
+#   docker compose up --build                 # 1 api node + 2 workers + db + redis
+#   docker compose up --build --scale worker=3 # scale workers horizontally
+#
+# The "api" node serves the dashboard + REST API on http://localhost:8080.
+# Worker nodes run only the scheduler loop (SERVE_FRONTEND=false) and compete
+# for job locks via Redis, demonstrating exactly-once execution.
 
 services:
-  # 1. The Database
   db:
     image: postgres:15-alpine
-    container_name: cron-db-container
-    restart: always
+    container_name: cron-db
+    restart: unless-stopped
     environment:
-      POSTGRES_USER: postgres
+      POSTGRES_USER: cron
       POSTGRES_PASSWORD: secret
-      POSTGRES_DB: postgres
+      POSTGRES_DB: cron
     ports:
       - "5432:5432"
     volumes:
       - postgres-data:/var/lib/postgresql/data
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U cron"]
+      interval: 5s
+      timeout: 3s
+      retries: 10
 
-  # 2. Redis (THE MISSING PIECE)
   redis:
-    image: redis:alpine
-    container_name: cron-redis-container
+    image: redis:7-alpine
+    container_name: cron-redis
     ports:
       - "6379:6379"
-
-  # 3. The Scheduler
-  scheduler:
-    build: .
-    ports:
-    - "8080:8080"
-    #container_name: scheduler-node-1
-    depends_on:
-      - db
-      - redis
-    environment:
-      DB_HOST: db
-      DB_PORT: 5432
-      DB_USER: postgres
-      DB_PASSWORD: secret
-      DB_NAME: postgres
-      REDIS_HOST: redis
-      REDIS_PORT: 6379  
     healthcheck:
-      test: ["CMD", "wget", "--spider", "-q", "http://localhost:8080/health"]
-      interval: 10s
-      timeout: 5s
-      retries: 3
+      test: ["CMD", "redis-cli", "ping"]
+      interval: 5s
+      timeout: 3s
+      retries: 10
+
+  api:
+    build: .
+    container_name: cron-api
+    ports:
+      - "8080:8080"
+    depends_on:
+      db:
+        condition: service_healthy
+      redis:
+        condition: service_healthy
+    environment:
+      APP_ENV: development
+      DATABASE_URL: postgres://cron:secret@db:5432/cron?sslmode=disable
+      REDIS_URL: redis://redis:6379
+      SERVE_FRONTEND: "true"
+      SEED_DATA: "true"
+      NODE_ID: api-node
 
   worker:
     build: .
-    #No "ports" section! It doesn't need to listen for API requests.
-    # It just runs the scheduler loop internally.
     depends_on:
-      - db
-      - redis
-    deploy:
-      replicas: 2  
-
+      db:
+        condition: service_healthy
+      redis:
+        condition: service_healthy
     environment:
-      DB_HOST: db
-      DB_PORT: 5432
-      DB_USER: postgres
-      DB_PASSWORD: secret
-      DB_NAME: postgres
-      # Redis Config
-      REDIS_HOST: redis
-      REDIS_PORT: 6379
+      APP_ENV: development
+      DATABASE_URL: postgres://cron:secret@db:5432/cron?sslmode=disable
+      REDIS_URL: redis://redis:6379
+      SERVE_FRONTEND: "false"
+      SEED_DATA: "false"
+    deploy:
+      replicas: 2
 
 volumes:
   postgres-data:

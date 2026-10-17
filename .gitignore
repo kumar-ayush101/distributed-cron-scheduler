@@ -1,0 +1,17 @@
+# Compiled binaries
+/server
+*.exe
+*.test
+*.out
+
+# Frontend build output served by the Go binary
+/web/
+
+# Environment files
+.env
+.env.local
+
+# Editor / OS
+.vscode/
+.idea/
+.DS_Store

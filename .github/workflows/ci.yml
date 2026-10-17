@@ -1,51 +1,70 @@
-name: Go CI Pipeline
+name: CI
 
-# Trigger the robot on every push to the 'main' branch
 on:
   push:
-    branches: [ "main" ]
+    branches: ["main"]
   pull_request:
-    branches: [ "main" ]
+    branches: ["main"]
 
 jobs:
-  build-and-test:
+  backend:
+    name: Backend (build, vet, test)
     runs-on: ubuntu-latest
-
-    services:
-      # We spin up a temporary Postgres for the robot to use during tests
-      postgres:
-        image: postgres:15-alpine
-        env:
-          POSTGRES_PASSWORD: secret
-          POSTGRES_DB: postgres
-        ports:
-          - 5432:5432
-        options: >-
-          --health-cmd pg_isready
-          --health-interval 10s
-          --health-timeout 5s
-          --health-retries 5
-
+    env:
+      # Pin the toolchain so the module's go directive never triggers an
+      # auto-download/upgrade during CI.
+      GOTOOLCHAIN: local
     steps:
-    - name: Checkout Code
-      uses: actions/checkout@v3
+      - uses: actions/checkout@v4
 
-    - name: Set up Go
-      uses: actions/setup-go@v4
-      with:
-        go-version: '1.23'
+      - name: Set up Go
+        uses: actions/setup-go@v5
+        with:
+          go-version: "1.25.x"
+          cache: true
 
-    - name: Install Dependencies
-      run: go mod download
+      - name: Download modules
+        run: go mod download
 
-    - name: Verify Code Compiles
-      # If this fails, you have a syntax error
-      run: go build -v ./cmd/server
+      - name: Vet
+        run: go vet ./...
 
-    - name: Run Unit Tests
-      # Runs all tests in the project
-      run: go test -v ./...
-    
-    - name: Test Docker Build
-      # Verifies that your Dockerfile is valid
-      run: docker build . -t my-app:latest
+      - name: Build
+        run: go build -v ./...
+
+      - name: Test
+        run: go test -race -count=1 ./...
+
+  frontend:
+    name: Frontend (lint, build)
+    runs-on: ubuntu-latest
+    defaults:
+      run:
+        working-directory: client
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Set up Node
+        uses: actions/setup-node@v4
+        with:
+          node-version: "22"
+          cache: npm
+          cache-dependency-path: client/package-lock.json
+
+      - name: Install
+        run: npm ci
+
+      - name: Lint
+        run: npm run lint
+
+      - name: Build
+        run: npm run build
+
+  docker:
+    name: Docker image build
+    runs-on: ubuntu-latest
+    needs: [backend, frontend]
+    steps:
+      - uses: actions/checkout@v4
+      - name: Build image
+        run: docker build -t cron-scheduler:ci .

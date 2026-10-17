@@ -1,0 +1,57 @@
+# Render Blueprint — https://render.com/docs/blueprint-spec
+#
+# One-click deploy: push this repo to GitHub, then in the Render dashboard
+# choose "New +" -> "Blueprint" and point it at the repo. Render reads this
+# file, provisions the database and builds the Docker image.
+#
+# The web service serves BOTH the REST API and the React dashboard from a
+# single origin, so you get one public live URL.
+#
+# Redis is intentionally optional. With no REDIS_URL the scheduler uses
+# PostgreSQL advisory locks, which keep the exactly-once guarantee on the
+# free tier. To scale out across many nodes, add a Render Key Value instance
+# and wire REDIS_URL (see the commented block below).
+
+services:
+  - type: web
+    name: cron-scheduler
+    runtime: docker
+    dockerfilePath: ./Dockerfile
+    plan: free
+    healthCheckPath: /health
+    autoDeploy: true
+    envVars:
+      - key: APP_ENV
+        value: production
+      - key: SEED_DATA
+        value: "true"
+      - key: SERVE_FRONTEND
+        value: "true"
+      - key: POLL_INTERVAL
+        value: 5s
+      - key: LOCK_TTL
+        value: 30s
+      - key: DATABASE_URL
+        fromDatabase:
+          name: cron-scheduler-db
+          property: connectionString
+      # --- Optional: enable Redis-based distributed locking ---
+      # 1. Uncomment the "cron-scheduler-redis" entry under services below.
+      # 2. Uncomment this env var to inject its connection string.
+      # - key: REDIS_URL
+      #   fromService:
+      #     type: keyvalue
+      #     name: cron-scheduler-redis
+      #     property: connectionString
+
+  # --- Optional Redis (Render Key Value). Uncomment to enable. ---
+  # - type: keyvalue
+  #   name: cron-scheduler-redis
+  #   plan: free
+  #   ipAllowList: []   # only internal connections
+
+databases:
+  - name: cron-scheduler-db
+    plan: free
+    databaseName: cron
+    user: cron

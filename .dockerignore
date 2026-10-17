@@ -1,0 +1,21 @@
+# Build artifacts
+web/
+server
+*.exe
+
+# Node
+client/node_modules/
+client/dist/
+
+# Go
+*.test
+
+# Local env & editor
+.env
+.env.*
+!client/.env.example
+.git/
+.github/
+*.md
+.vscode/
+.idea/
